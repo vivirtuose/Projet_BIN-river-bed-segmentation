@@ -200,7 +200,7 @@ for i, img_info in enumerate(data_val['images']):
         'dice_target'        : dices['target'],
     })
 
-print(f"\n✅ {len(resultats)} images traitées")
+print(f"\n {len(resultats)} images traitées")
 
 # ============================================================
 # 5. EXPORT CSV
@@ -211,7 +211,7 @@ with open(CSV_SORTIE, 'w', newline='') as f:
     writer.writeheader()
     writer.writerows(resultats)
 
-print(f"✅ Stats exportées → {CSV_SORTIE}")
+print(f" Stats exportées → {CSV_SORTIE}")
 
 # ============================================================
 # 6. GRAPHIQUES DE SYNTHÈSE
@@ -294,4 +294,4 @@ axes[2].grid(axis='y')
 plt.tight_layout()
 plt.savefig('stats_couverture.png', dpi=150, bbox_inches='tight')
 plt.show()
-print("✅ Graphiques sauvegardés → stats_couverture.png")
+print(" Graphiques sauvegardés → stats_couverture.png")
