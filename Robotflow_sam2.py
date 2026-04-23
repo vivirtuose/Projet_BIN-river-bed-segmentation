@@ -48,10 +48,10 @@ for i, nom_image in enumerate(images):
     json_sortie = os.path.join(DOSSIER_SORTIE, f"{nom_base}.json")
 
     if os.path.exists(json_sortie):
-        print(f"[{i+1}/{len(images)}] ⏭️  Déjà traité : {nom_image}")
+        print(f"[{i+1}/{len(images)}] --> Déjà traité : {nom_image}")
         continue
 
-    print(f"[{i+1}/{len(images)}] ⏳ {nom_image}", end=' ')
+    print(f"[{i+1}/{len(images)}] pending {nom_image}", end=' ')
 
     try:
         result = client.run_workflow(
