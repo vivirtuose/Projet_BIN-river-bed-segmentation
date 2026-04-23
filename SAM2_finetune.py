@@ -28,7 +28,7 @@ print(f"VRAM    : {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1
 #     "https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_small.pt",
 #     "sam2.1_hiera_small.pt"
 # )
-# print("✅ Poids téléchargés (~185 MB)")
+# print("Poids téléchargés (~185 MB)")
 
 
 # ============================================================
@@ -151,7 +151,7 @@ def calculer_dice(pred_masque, gt_masque, eps=1e-6):
 print("\n⏳ Chargement de SAM2 small...")
 sam2_model = build_sam2(CONFIG_SAM2, POIDS_SAM2, device=DEVICE)
 predictor  = SAM2ImagePredictor(sam2_model)
-print("✅ SAM2 chargé")
+print("SAM2 chargé")
 
 # Geler tout sauf le mask decoder
 for name, param in sam2_model.named_parameters():
@@ -267,7 +267,7 @@ for epoch in range(N_EPOCHS):
             train_losses.append(loss.item())
             train_dices.append(dice)
         except Exception as e:
-            print(f"\n⚠️ Sample {idx} ignoré : {e}")
+            print(f"\n Sample {idx} ignoré : {e}")
             continue
 
     # --- Val ---
@@ -303,7 +303,7 @@ for epoch in range(N_EPOCHS):
     if val_loss < meilleure_val_loss:
         meilleure_val_loss = val_loss
         torch.save(sam2_model.state_dict(), POIDS_SORTIE)
-        print(f"  ✅ Meilleur modèle sauvegardé → {POIDS_SORTIE}")
+        print(f" Meilleur modèle sauvegardé → {POIDS_SORTIE}")
 
 # ============================================================
 # 8. COURBES D'ENTRAÎNEMENT
@@ -328,16 +328,17 @@ axes[1].grid(True)
 plt.tight_layout()
 plt.savefig('courbes_entrainement.png')
 plt.show()
-print("✅ Courbes sauvegardées → courbes_entrainement.png")
+print("Courbes sauvegardées → courbes_entrainement.png")
 
 
 
 """TEST 1 resultat:
 Les courbes montrent un entraînement qui fonctionne mais avec des limitations claires :
-Train Loss : 0.63 → 0.29  ✅ descend bien — le modèle apprend
-Val Loss   : 0.73 → 0.54  ✅ descend aussi — pas d'overfitting
-Val Dice   : 0.12 → 0.28  ⚠️ progresse mais reste faible
-🔍 Diagnostic
+Train Loss : 0.63 → 0.29  descend bien — le modèle apprend
+Val Loss   : 0.73 → 0.54  descend aussi — pas d'overfitting
+Val Dice   : 0.12 → 0.28  progresse mais reste faible
+
+Diagnostic
 Le gap entre Train Loss et Val Loss se creuse — c'est du sous-apprentissage plutôt que de l'overfitting :
 Sous-apprentissage (notre cas) :
   → le modèle n'a pas assez vu de données pour généraliser
@@ -347,7 +348,8 @@ Sous-apprentissage (notre cas) :
 Overfitting (cas inverse) :
   → Train Loss très bas, Val Loss remonte
   → le modèle mémorise sans généraliser
-🎯 Solutions par ordre de priorité
+
+Solutions par ordre de priorité
 1. Augmenter N_TRAIN_PAR_EPOCH : 100 → 500
    → exposer le modèle à plus de données par epoch
 
@@ -361,23 +363,24 @@ Overfitting (cas inverse) :
 
 
 """TEST 2 resultat:
-Train Loss : 0.50 → 0.09  ✅ descend régulièrement
-Val Loss   : 0.46 → 0.32  ✅ descend mais stagne après epoch 5
-Val Dice   : 0.28 → 0.61  ✅ bonne progression
-🔍 Ce que les courbes révèlent
+Train Loss : 0.50 → 0.09  descend régulièrement
+Val Loss   : 0.46 → 0.32  descend mais stagne après epoch 5
+Val Dice   : 0.28 → 0.61  bonne progression
+
+Diagnostic
 Le gap Train/Val Loss se creuse progressivement :
 Epoch 1  : Train=0.50, Val=0.46  → gap de 0.04
 Epoch 20 : Train=0.09, Val=0.32  → gap de 0.23
 C'est du début d'overfitting — le modèle apprend très bien les 500 samples d'entraînement mais commence à les mémoriser plutôt que généraliser.
 Le Val Dice plafonne à ~0.60 depuis epoch 12 — le modèle a atteint sa limite avec ce dataset et ces paramètres.
 
-🎯 Interprétation globale
+Interprétation globale
 Val Dice 0.61 = le modèle segmente correctement
                 61% des pixels au bon endroit
                 → correct pour un premier fine-tuning
                 → suffisant pour tester l'inférence
 
-Pour aller au-delà de 0.70 :
+Pour aller au-delà de 0.70 ??   
   → plus de données annotées
   → entraîner aussi le prompt encoder
   → data augmentation plus agressive
