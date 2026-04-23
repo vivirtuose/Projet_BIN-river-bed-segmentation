@@ -58,7 +58,7 @@ def construire_masque_semantique(image_id, data, images_dict, categories):
         if masque.ndim == 3:
             masque = masque[:, :, 0]
 
-        masque_global[masque == 1] = ann['category_id']  # ← dans la boucle ✅
+        masque_global[masque == 1] = ann['category_id']  # ← dans la boucle 
 
     return masque_global, img_info
 
@@ -285,7 +285,7 @@ import os
 
 # def deziper_et_inspecter(zip_ path, dossier_sortie):
 #     """Dézipe une archive et affiche son contenu"""
-#     print(f"\n📦 Dézippage de {zip_path}...")
+#     print(f"\n Dézippage de {zip_path}...")
 
 #     with zipfile.ZipFile(zip_path, 'r') as z:
 #         z.extractall(dossier_sortie)
