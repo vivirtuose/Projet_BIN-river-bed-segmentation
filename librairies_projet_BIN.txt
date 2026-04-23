@@ -1,0 +1,406 @@
+================================================================
+ANNOTATION DES LIBRAIRIES SPÉCIALISÉES — PROJET BIN
+Par script, par section de code
+(json, numpy, cv2, os, random, shutil, csv exclues — sauf cas spécial)
+================================================================
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. Projet_BIN.py — Pipeline de données
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+────────────────────────────────
+matplotlib.use('TkAgg')
+────────────────────────────────
+  Quoi : Force le backend graphique TkAgg (Tkinter) AVANT tout import de pyplot.
+  Pourquoi : Par défaut matplotlib utilise un backend non-interactif (Agg) quand
+             il est lancé hors notebook. TkAgg ouvre les figures dans une fenêtre
+             Tkinter cliquable. Doit être appelé AVANT "import matplotlib.pyplot".
+  GitHub : github.com/matplotlib/matplotlib
+
+────────────────────────────────
+from PIL import Image
+────────────────────────────────
+  Librairie : Pillow (fork maintenu de PIL)
+  Quoi : Chargement/sauvegarde d'images en Python pur.
+  Utilisée ici : importée mais peu utilisée directement — cv2 fait le gros du travail.
+                 Présente probablement pour des tests/debug de visualisation.
+  GitHub : github.com/python-pillow/Pillow
+
+────────────────────────────────
+from pycocotools import mask as coco_mask
+────────────────────────────────
+  Librairie : pycocotools (COCO API officielle)
+  GitHub : github.com/cocodataset/cocoapi/tree/master/PythonAPI
+
+  Fonctions utilisées dans Projet_BIN.py :
+
+  • coco_mask.frPyObjects(rle_dict, h, w)
+    → Convertit un RLE au format CVAT (counts = liste Python d'entiers)
+      vers le format interne pycocotools (counts = bytes compressés).
+    → Appelé dans : construire_masque_semantique() ligne 55
+
+  • coco_mask.decode(rle)
+    → Décode un RLE compressé en masque numpy binaire (H, W) de type uint8.
+    → Le résultat peut être (H, W, 1) → d'où le check masque.ndim == 3.
+    → Appelé dans : construire_masque_semantique() ligne 56
+
+────────────────────────────────
+import albumentations as A
+────────────────────────────────
+  Librairie : Albumentations
+  GitHub : github.com/albumentations-team/albumentations
+
+  Fonctions utilisées :
+
+  • A.Compose([...])                         ligne 110
+    → Chaîne plusieurs transformations. Applique la MÊME seed aléatoire
+      à l'image ET au masque quand on appelle transform(image=img, mask=masque).
+
+  • A.HorizontalFlip(p=0.5)                 ligne 111
+    → Miroir horizontal avec probabilité 50%.
+
+  • A.RandomRotate90(p=0.5)                  ligne 112
+    → Rotation de 90°, 180° ou 270° (choix aléatoire), probabilité 50%.
+
+  • A.RandomBrightnessContrast(p=0.3)        ligne 113
+    → Modifie luminosité et contraste aléatoirement, probabilité 30%.
+    → Transformation PHOTOMÉTRIQUE (n'affecte pas le masque).
+
+  • A.GaussNoise(p=0.2)                      ligne 114
+    → Ajoute du bruit gaussien à l'image, probabilité 20%.
+    → Transformation PHOTOMÉTRIQUE (n'affecte pas le masque).
+
+  • transform(image=img, mask=masque_sem)     ligne 212
+    → Appel effectif : retourne un dict {'image': ..., 'mask': ...}
+      avec les transformations géométriques appliquées aux deux,
+      et les transformations photométriques appliquées uniquement à l'image.
+
+────────────────────────────────
+from collections import Counter
+────────────────────────────────
+  Quoi : Compteur intégré Python (stdlib).
+  Utilisée ici : Counter(a['category_id'] for a in annotations)
+                 → compte la distribution des annotations par catégorie.
+  Pourquoi la mentionner : c'est un outil stdlib mais essentiel dans le
+                           pipeline pour vérifier l'équilibre des classes
+                           après chaque étape (fusion, augmentation, split).
+
+────────────────────────────────
+import zipfile
+────────────────────────────────
+  Quoi : Module stdlib pour manipuler les archives .zip.
+  Utilisée ici : (commenté) ZipFile(path).extractall() pour dézipper train_set1/2.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+2. Robotflow_sam2.py — API Roboflow
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+────────────────────────────────
+from inference_sdk import InferenceHTTPClient
+────────────────────────────────
+  Librairie : inference (SDK Roboflow)
+  GitHub : github.com/roboflow/inference
+  Install : pip install inference-sdk
+
+  Fonctions utilisées :
+
+  • InferenceHTTPClient(api_url, api_key)            ligne 31
+    → Crée un client HTTP vers l'API serverless Roboflow.
+    → api_url = "https://serverless.roboflow.com" (endpoint cloud).
+    → api_key = clé API personnelle du workspace.
+
+  • client.run_workflow(workspace_name, workflow_id, images, use_cache)   ligne 57
+    → Envoie une image au workflow "sam2" configuré dans Roboflow.
+    → Le workflow côté Roboflow enchaîne : SAM2 → Mask Area Measurement
+      → Mask Visualization → Label Visualization.
+    → Retourne un dict JSON avec les résultats (masques, aires, labels).
+    → use_cache=True : évite de re-traiter une image déjà envoyée.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+3. SAM2_finetune.py — Entraînement
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+────────────────────────────────
+matplotlib.use('TkAgg')
+────────────────────────────────
+  (Même usage que Projet_BIN.py — voir ci-dessus)
+
+────────────────────────────────
+import torch
+────────────────────────────────
+  Librairie : PyTorch
+  GitHub : github.com/pytorch/pytorch
+
+  Utilisations par section :
+
+  [CONFIGURATION — lignes 1-4]
+  • torch.cuda.is_available()           → vérifie la présence d'un GPU CUDA
+  • torch.cuda.get_device_name(0)       → nom du GPU (ex: "NVIDIA RTX 4060 Laptop")
+  • torch.cuda.get_device_properties(0) → propriétés GPU (VRAM totale, etc.)
+
+  [LOSS — lignes 130-145]
+  • torch.sigmoid(pred)                 → applique σ(x) = 1/(1+e^-x) sur les logits
+  • nn.BCEWithLogitsLoss()              → Binary Cross-Entropy avec sigmoid intégré
+                                          (plus stable numériquement que sigmoid + BCE séparés)
+  • .sum(), .float(), .item()           → opérations tenseur standard
+
+  [CHARGEMENT MODÈLE — lignes 151-164]
+  • sam2_model.named_parameters()       → itère sur (nom, tenseur) de chaque paramètre
+  • param.requires_grad = True/False    → active/désactive le calcul de gradient
+  • p.numel()                           → nombre d'éléments dans un tenseur (pour compter les params)
+
+  [OPTIMISEUR — lignes 170-176]
+  • torch.optim.AdamW(params, lr, weight_decay)
+    → Optimiseur Adam avec weight decay découplé (régularisation L2).
+    → Ne reçoit que les params avec requires_grad=True.
+
+  • torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode, factor, patience)
+    → Réduit le LR par factor (0.5) quand val_loss ne diminue plus pendant
+      patience (2) epochs consécutives.
+
+  [TRAITER_BATCH — lignes 189-235]
+  • torch.autograd.set_grad_enabled(training)
+    → Context manager : active les gradients en mode train, les désactive en mode val.
+    → Plus propre que torch.no_grad() car conditionnel.
+
+  • torch.tensor(data, device, dtype)   → crée un tenseur sur le GPU
+  • .unsqueeze(0)                       → ajoute une dimension batch (obligatoire pour SAM2)
+
+  • torch.nn.functional.interpolate(input, size, mode, align_corners)
+    → Redimensionne le masque basse résolution (ex: 256×256) vers la taille originale
+      (ex: 3000×4000) en interpolation bilinéaire.
+    → Remplace postprocess_masks() qui N'EXISTE PAS dans SAM2.
+
+  [BOUCLE D'ENTRAÎNEMENT — lignes 250-306]
+  • sam2_model.train()                  → active dropout + batchnorm en mode entraînement
+  • sam2_model.eval()                   → désactive dropout, fixe batchnorm en mode inférence
+  • optimizer.zero_grad()               → remet les gradients à zéro avant chaque forward
+  • loss.backward()                     → rétropropagation : calcule ∂loss/∂param pour chaque param
+  • torch.nn.utils.clip_grad_norm_(params, max_norm=1.0)
+    → Limite la norme L2 globale des gradients à 1.0.
+    → Empêche l'explosion des gradients (courant avec des petits batch sizes).
+  • optimizer.step()                    → met à jour les poids : w = w - lr * gradient
+  • scheduler.step(val_loss)            → vérifie si le LR doit être réduit
+  • torch.save(model.state_dict(), path) → sauvegarde les poids du modèle sur disque
+
+────────────────────────────────
+import torch.nn as nn
+────────────────────────────────
+  Sous-module : torch.nn (couches et fonctions de perte)
+  • nn.BCEWithLogitsLoss()              → voir section LOSS ci-dessus
+
+────────────────────────────────
+import torch.optim as optim
+────────────────────────────────
+  Sous-module : torch.optim (optimiseurs)
+  • optim.AdamW(...)                    → voir section OPTIMISEUR ci-dessus
+  • optim.lr_scheduler.ReduceLROnPlateau(...) → voir ci-dessus
+
+────────────────────────────────
+from torch.utils.data import Dataset
+────────────────────────────────
+  Sous-module : torch.utils.data
+  • Dataset                             → classe abstraite à hériter pour créer un dataset custom.
+    → Oblige à implémenter __len__() et __getitem__(idx).
+    → RiviereDataset hérite de Dataset (ligne 82).
+    → Permet l'utilisation avec DataLoader (non utilisé ici car batch=1).
+
+────────────────────────────────
+from pycocotools import mask as coco_mask
+────────────────────────────────
+  (Même usage que Projet_BIN.py)
+  • coco_mask.frPyObjects()             → dans RiviereDataset.__getitem__() ligne 102
+  • coco_mask.decode()                  → dans RiviereDataset.__getitem__() ligne 103
+
+────────────────────────────────
+from sam2.build_sam import build_sam2
+from sam2.sam2_image_predictor import SAM2ImagePredictor
+────────────────────────────────
+  Librairie : SAM2 (Segment Anything Model 2 — Meta/Facebook Research)
+  GitHub : github.com/facebookresearch/sam2
+
+  • build_sam2(config_yaml, checkpoint_path, device)           ligne 152
+    → Construit le modèle SAM2 complet (Image Encoder Hiera + Prompt Encoder
+      + Mask Decoder) à partir du fichier de config YAML et des poids .pt.
+    → Retourne un nn.Module PyTorch standard.
+
+  • SAM2ImagePredictor(sam2_model)                              ligne 153
+    → Wrapper haut-niveau qui gère :
+      - set_image(img) : passe l'image dans l'Image Encoder, stocke les features
+        dans predictor._features['image_embed'] et predictor._features['high_res_feats'].
+      - _orig_hw : stocke la taille originale de l'image.
+    → ATTENTION : predictor.predict() retourne du numpy → PAS DE GRADIENT.
+      On utilise le predictor uniquement pour set_image(), puis on appelle
+      directement les modules internes du modèle.
+
+  • sam2_model.sam_prompt_encoder(points, boxes, masks)         ligne 199
+    → Encode les prompts en sparse_embeddings + dense_embeddings.
+    → points = tuple(coords_tensor[1,N,2], labels_tensor[1,N])
+      labels : 1=positif, 0=négatif, 2=coin haut-gauche box, 3=coin bas-droit box.
+    → boxes = tensor[1,4] au format [x1, y1, x2, y2]
+    → masks = None → utilise un dense embedding vide (appris).
+
+  • sam2_model.sam_prompt_encoder.get_dense_pe()                ligne 212
+    → Retourne le positional encoding dense (fixe, sinusoïdal) de l'image.
+    → Ajouté aux image_embeddings dans le Mask Decoder pour que le transformer
+      sache OÙ dans l'image se trouvent les features.
+
+  • sam2_model.sam_mask_decoder(                                ligne 210
+      image_embeddings, image_pe,
+      sparse_prompt_embeddings, dense_prompt_embeddings,
+      multimask_output, repeat_image, high_res_features)
+    → Combine features image + prompts → produit low_res_masks.
+    → multimask_output=False : un seul masque (vs 3 candidats ambigus).
+    → repeat_image=False : une seule image (pas de batch de prompts différents).
+    → high_res_features : features multi-échelle de Hiera (stages précoces).
+    → Retourne : (low_res_masks, iou_predictions, _, _)
+      low_res_masks : tensor [1, 1, 256, 256] (logits, pas probabilités).
+
+────────────────────────────────
+from tqdm import tqdm
+────────────────────────────────
+  Librairie : tqdm
+  GitHub : github.com/tqdm/tqdm
+  • tqdm(iterable, desc="...")          → barre de progression dans le terminal.
+    → Affiche : Epoch 1/20 [Train]: 45%|████▌     | 225/500 [03:12<03:55]
+    → Utilisé pour les boucles train (ligne 256) et val (ligne 277).
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+4. SAM2_inference.py — Inférence visuelle
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+────────────────────────────────
+matplotlib.use('TkAgg')
+────────────────────────────────
+  (Même usage — voir Projet_BIN.py)
+
+────────────────────────────────
+from matplotlib.patches import Patch
+────────────────────────────────
+  Sous-module : matplotlib.patches
+  • Patch(color, label)                 → crée un élément de légende personnalisé.
+    → Utilisé pour afficher la légende colorée des classes (pebble=orange,
+      vegetation=vert, target=bleu) sur les figures de comparaison GT vs Pred.
+    → Ligne : legende = [Patch(color=..., label=...) for i in [1,2,3]]
+
+────────────────────────────────
+from pycocotools import mask as coco_mask
+────────────────────────────────
+  (Même usage)
+  • coco_mask.frPyObjects() + decode()  → reconstruction du masque GT pour comparaison.
+
+────────────────────────────────
+from sam2.build_sam import build_sam2
+from sam2.sam2_image_predictor import SAM2ImagePredictor
+────────────────────────────────
+  (Même librairie SAM2 — voir SAM2_finetune.py)
+
+  Spécificités dans inference.py :
+
+  • sam2_model.load_state_dict(torch.load(POIDS_FINETUNED, map_location=DEVICE))
+    → Charge les poids fine-tunés par-dessus le modèle de base.
+    → map_location=DEVICE : remappe les tenseurs sur le bon device (utile si
+      entraîné sur GPU A et inférence sur GPU B ou CPU).
+
+  • sam2_model.eval()
+    → OBLIGATOIRE pour l'inférence. Désactive :
+      - Dropout (sinon les prédictions seraient aléatoires)
+      - BatchNorm en mode mobile (utilise les stats apprises, pas celles du batch)
+
+  • torch.no_grad() (implicite via with torch.no_grad():)     ligne dans inferer_image()
+    → Désactive le calcul de gradient pendant l'inférence.
+    → Économise ~50% de VRAM car pas besoin de stocker les activations intermédiaires.
+
+  • torch.sigmoid(pred_masks[0, 0]) > 0.5                     → seuillage final
+    → Convertit les logits en probabilités puis en masque binaire.
+
+────────────────────────────────
+from collections import defaultdict
+────────────────────────────────
+  • defaultdict(list)                   → dict qui crée automatiquement une liste vide
+                                          pour les clés inexistantes.
+    → anns_par_image = defaultdict(list) : regroupe les annotations par image_id
+      sans vérifier si la clé existe. Plus propre que dict + setdefault().
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+5. SAM2_stats.py — Statistiques de couverture
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+────────────────────────────────
+matplotlib.use('TkAgg')
+────────────────────────────────
+  (Même usage — voir Projet_BIN.py)
+
+────────────────────────────────
+import torch
+────────────────────────────────
+  Utilisations spécifiques à stats.py :
+
+  • torch.load(path, map_location)      → charge les poids fine-tunés
+  • torch.no_grad()                     → contexte sans gradient pour l'inférence
+  • torch.tensor(data, device, dtype)   → création de tenseurs pour les prompts
+  • torch.sigmoid()                     → conversion logits → probabilités
+  • torch.nn.functional.interpolate()   → upscale des masques basse résolution
+
+  Aucun calcul de gradient, aucun optimizer — script purement inférence + stats.
+
+────────────────────────────────
+from collections import defaultdict
+────────────────────────────────
+  • defaultdict(list)                   → regroupement des annotations par image_id
+    → anns_par_image[ann['image_id']].append(ann)
+
+────────────────────────────────
+from pycocotools import mask as coco_mask
+────────────────────────────────
+  (Même usage — reconstruction masques GT)
+
+────────────────────────────────
+from sam2.build_sam import build_sam2
+from sam2.sam2_image_predictor import SAM2ImagePredictor
+────────────────────────────────
+  (Même usage que SAM2_inference.py — chargement modèle + inférence)
+
+────────────────────────────────
+import csv
+────────────────────────────────
+  Module stdlib.
+  • csv.DictWriter(f, fieldnames)       → écrit les résultats (Dice, couverture par
+                                          classe) dans stats_couverture.csv.
+    → Chaque ligne = 1 image du val set avec ses métriques.
+    → Utilisé car le fichier est ensuite ouvert dans Excel/LibreOffice pour analyse.
+
+
+================================================================
+RÉSUMÉ CROISÉ — Quelle librairie dans quel script
+================================================================
+
+Librairie              | BIN | Roboflow | Finetune | Inference | Stats
+───────────────────────┼─────┼──────────┼──────────┼───────────┼──────
+pycocotools            |  ✓  |          |    ✓     |     ✓     |   ✓
+albumentations         |  ✓  |          |          |           |
+inference_sdk          |     |    ✓     |          |           |
+torch (core)           |     |          |    ✓     |     ✓     |   ✓
+torch.nn               |     |          |    ✓     |           |
+torch.optim            |     |          |    ✓     |           |
+torch.utils.data       |     |          |    ✓     |           |
+sam2 (build + predict) |     |          |    ✓     |     ✓     |   ✓
+tqdm                   |     |          |    ✓     |           |
+PIL / Pillow           |  ✓  |          |          |           |
+matplotlib.patches     |     |          |          |     ✓     |
+collections.Counter    |  ✓  |          |          |           |   ✓*
+collections.defaultdict|     |          |          |     ✓     |   ✓
+csv                    |     |          |          |           |   ✓
+
+* Counter utilisé dans Projet_BIN.py pour la distribution des annotations.
+  Dans SAM2_stats.py, ce sont les fonctions numpy qui font les calculs de couverture.
+
+
+================================================================
+FIN — Mars 2026
+================================================================
